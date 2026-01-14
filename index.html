@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Result - ขอนแก่น เขต 6</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <style>
+        .highlight-update { animation: pulse-yellow 1s ease-out; }
+        @keyframes pulse-yellow { 0% { background-color: rgba(250, 204, 21, 0.5); } 100% { background-color: transparent; } }
+        /* Modal Animation */
+        .modal { transition: opacity 0.25s ease; }
+        body.modal-active { overflow-x: hidden; overflow-y: hidden !important; }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen font-sans">
+    
+    <div class="bg-slate-800 p-4 shadow-lg sticky top-0 z-10 border-b border-slate-700">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <h1 class="text-xl md:text-2xl font-bold text-yellow-400">📊 ผลการเลือกตั้ง (ขอนแก่น เขต 6)</h1>
+                <span class="text-xs text-slate-400 mt-1">(ไม่เป็นทางการ)</span>
+            </div>
+            <div id="connectionStatus" class="flex items-center space-x-2 bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                <span class="w-2 h-2 bg-gray-500 rounded-full" id="statusDot"></span>
+                <span class="text-xs font-bold tracking-wider text-gray-400" id="statusText">CONNECTING...</span>
+            </div>
+        </div>
+    </div>
+    <script>
+    // 1. ป้องกันคลิกขวา (Context Menu)
+    document.addEventListener('contextmenu', event => event.preventDefault());
+
+    // 2. ป้องกันคีย์ลัดต่างๆ
+    document.onkeydown = function(e) {
+        // กัน F12
+        if (e.keyCode == 123) {
+            return false;
+        }
+        // กัน Ctrl+I (DevTools)
+        if (e.ctrlKey && e.shiftKey && e.keyCode == 'I'.charCodeAt(0)) {
+            return false;
+        }
+        // กัน Ctrl+J (DevTools Console)
+        if (e.ctrlKey && e.shiftKey && e.keyCode == 'J'.charCodeAt(0)) {
+            return false;
+        }
+        // กัน Ctrl+U (View Source)
+        if (e.ctrlKey && e.keyCode == 'U'.charCodeAt(0)) {
+            return false;
+        }
+        // กัน Ctrl+S (Save)
+        if (e.ctrlKey && e.keyCode == 'S'.charCodeAt(0)) {
+            alert('ห้ามบันทึกหน้าเว็บนี้!'); // ถ้าอยากให้เตือนให้เปิดบรรทัดนี้
+            return false;
+        }
+    }
+    </script>
+    <div class="container mx-auto p-4 md:p-6 max-w-5xl">
+        <div class="bg-slate-800 p-4 rounded-lg mb-6 shadow-md border border-slate-700">
+            <div class="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-4 items-center">
+                <div class="text-sm text-gray-400 whitespace-nowrap">🔍 พื้นที่:</div>
+                <select id="amphoeFilter" class="bg-slate-700 text-white p-2 rounded w-full md:w-auto flex-1 border border-slate-600 focus:border-yellow-400 outline-none" onchange="handleAmphoeChange()"></select>
+                <select id="tambonFilter" class="hidden bg-slate-700 text-white p-2 rounded w-full md:w-auto flex-1 border border-slate-600 focus:border-yellow-400 outline-none" onchange="calculateResults()">
+                    <option value="ALL">ดูทุกตำบล</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="bg-slate-800 p-6 rounded-lg shadow-md mb-8 border border-slate-700">
+            <h2 class="text-lg font-semibold mb-4 text-center text-gray-200">สรุปคะแนนรวม</h2>
+            <div class="h-64 md:h-80 relative w-full"><canvas id="mainChart"></canvas></div>
+        </div>
+
+        <div class="bg-slate-800 p-6 rounded-lg shadow-md border border-slate-700">
+            <div class="flex justify-between items-end mb-6 border-b border-slate-700 pb-2">
+                <h2 class="text-lg font-semibold text-gray-200">🏆 อันดับคะแนนสูงสุด</h2>
+                <span class="text-xs text-gray-400 italic">*คลิกที่ชื่อเพื่อดูรายละเอียด</span>
+                <span class="text-xs text-gray-500" id="lastUpdate">รอข้อมูล...</span>
+            </div>
+            <div id="leaderboard" class="space-y-3">
+                <div class="text-center py-10 text-gray-500 animate-pulse">กำลังโหลดข้อมูล...</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="detailModal" class="modal opacity-0 pointer-events-none fixed w-full h-full top-0 left-0 flex items-center justify-center z-50">
+        <div class="modal-overlay absolute w-full h-full bg-gray-900 opacity-90" onclick="closeModal()"></div>
+        
+        <div class="modal-container bg-slate-800 w-11/12 md:max-w-3xl mx-auto rounded shadow-lg z-50 overflow-y-auto">
+            
+            <div class="modal-content py-4 text-left px-6">
+                <div class="flex justify-between items-center pb-3 border-b border-slate-600">
+                    <div class="flex items-center gap-3" id="modalHeader">
+                        </div>
+                    <div class="modal-close cursor-pointer z-50" onclick="closeModal()">
+                        <svg class="fill-current text-white" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+                            <path d="M14.53 4.53l-1.06-1.06L9 7.94 4.53 3.47 3.47 4.53 7.94 9l-4.47 4.47 1.06 1.06L9 10.06l4.47 4.47 1.06-1.06L10.06 9z"></path>
+                        </svg>
+                    </div>
+                </div>
+
+                <div class="my-5">
+                    <h3 class="text-lg font-semibold text-gray-300 mb-2 text-center">📍 คะแนนแยกรายอำเภอ</h3>
+                    <div class="h-64 relative w-full">
+                        <canvas id="detailChart"></canvas>
+                    </div>
+                    
+                    <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-slate-700 p-4 rounded text-center">
+                            <span class="text-gray-400 text-sm">คะแนนรวมทั้งหมด</span>
+                            <div class="text-3xl font-bold text-yellow-400" id="modalTotalScore">0</div>
+                        </div>
+                        <div class="bg-slate-700 p-4 rounded text-center">
+                            <span class="text-gray-400 text-sm">อำเภอที่ได้คะแนนมากที่สุด</span>
+                            <div class="text-xl font-bold text-white" id="modalTopAmphoe">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CONFIG
+        const supabaseUrl = 'https://vtxkopsgdmxygdoqdjzz.supabase.co'
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0eGtvcHNnZG14eWdkb3Fkanp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMTA2NjYsImV4cCI6MjA4Mzg4NjY2Nn0.EabcmBvfAMLQLOt09GC_xxprZtLCJ-frsnfCf3__x5g'
+        const db = window.supabase.createClient(supabaseUrl, supabaseKey)
+
+        // ข้อมูลพื้นที่จริง
+        const realLocationData = {
+            "อ.ภูผาม่าน": {
+                "ต.ภูผาม่าน": [ {m:1, n:"ภูผาม่าน"}, {m:2, n:"ซำภูทองใต้"}, {m:3, n:"สว่างโนนสูง"}, {m:4, n:"ท่ากระบือ"}, {m:5, n:"นาน้ำซำ"}, {m:6, n:"โนนสว่าง"}, {m:7, n:"นาน้ำซำใหม่"}, {m:8, n:"ห้วยถ้ำเต่า"}, {m:9, n:"ภูกระแต"} ],
+                "ต.โนนคอม": [ {m:1, n:"โนนคอม"}, {m:2, n:"เซินเหนือ"}, {m:3, n:"เซินใต้"}, {m:4, n:"ท่าขาม"}, {m:5, n:"ป่ากล้วย"}, {m:6, n:"ป่ากล้วย (แยกใหม่)"}, {m:7, n:"หนองนกทา"}, {m:8, n:"หนองบัวทอง"} ],
+                "ต.วังสวาบ": [ {m:1, n:"วังสวาบ"}, {m:2, n:"วังผาดำ"}, {m:3, n:"หนองแห้ว"}, {m:4, n:"วังมล"}, {m:5, n:"วังสวาบ"}, {m:6, n:"ดงสะครั้น"}, {m:7, n:"ซำผักหนาม"}, {m:8, n:"ซำม่วง"}, {m:9, n:"วังใหม่"}, {m:10, n:"โนนเตาเหล็ก"} ],
+                "ต.นาฝาย": [ {m:1, n:"สะแกเครือ"}, {m:2, n:"นาฝายใต้"}, {m:3, n:"สองคอน"}, {m:4, n:"ห้วยซ้อ"}, {m:5, n:"นาฝายเหนือ"}, {m:6, n:"ซำเปิบ"} ],
+                "ต.ห้วยม่วง": [ {m:1, n:"ซำภูทองเหนือ"}, {m:2, n:"วังเจริญ"}, {m:3, n:"ห้วยม่วง"}, {m:4, n:"โนนสะอาด"}, {m:5, n:"ห้วยซ้อ"}, {m:6, n:"ทรัพย์สมบูรณ์"}, {m:7, n:"ห้วยเตย"}, {m:8, n:"ผาน้ำทิพย์"}, {m:9, n:"ห้วยม่วงใหม่"} ]
+            },
+            "อ.ชุมแพ": {
+                "ต.ชุมแพ (เทศบาลเมือง)": [ {m:1, n:"ชุมชนบ้านชุมแพ"}, {m:2, n:"ชุมชนหัวหนอง"}, {m:4, n:"ชุมชนโนนศิลา"}, {m:8, n:"ชุมชนสันติสุข"}, {m:9, n:"ชุมชนสว่างวารี"}, {m:10, n:"ชุมชนกุดชุมแพ"}, {m:13, n:"ชุมชนนาโพธิ์"}, {m:15, n:"ชุมชนศรีมงคล"}, {m:16, n:"ชุมชนหนองตาไก้"}, {m:18, n:"ชุมชนนครชัย"} ],
+                "ต.ชุมแพ (อบต.)": [ {m:1, n:"แห่"}, {m:2, n:"มาลา"}, {m:3, n:"นาดอกไม้"}, {m:4, n:"โนนเมือง"}, {m:5, n:"หนองบัว"}, {m:6, n:"เชิญ"}, {m:7, n:"หนองจิก"}, {m:8, n:"แก้งยาว"}, {m:9, n:"ดอนหัน"}, {m:10, n:"สว่างวารี"}, {m:11, n:"หนองบัว"} ],
+                "ต.ขัวเรียง": [ {m:1, n:"นาสีนวล"}, {m:2, n:"โคกสูง"}, {m:3, n:"สัมพันธ์"}, {m:4, n:"ขามป้อม"}, {m:5, n:"สว่างหนองแก"}, {m:6, n:"โคกม่วง"}, {m:7, n:"โคกม่วง"}, {m:8, n:"โคกม่วง"}, {m:9, n:"โนนศิลา"}, {m:10, n:"ขามป้อม"}, {m:11, n:"โป่งเอียด"}, {m:12, n:"ขามป้อม"} ],
+                "ต.นาหนองทุ่ม": [ {m:1, n:"นาหนองทุ่ม"}, {m:2, n:"โนนทองหลาง"}, {m:3, n:"ห้วยอีเปาะ"}, {m:4, n:"วังยาวใหญ่"}, {m:5, n:"โนนชาด"}, {m:6, n:"โนนโก"}, {m:7, n:"วังยาวน้อย"}, {m:8, n:"นาหนองทุ่ม"}, {m:9, n:"น้อยพัฒนา"}, {m:10, n:"สระแก้ว"}, {m:11, n:"ซำผักหนาม"}, {m:12, n:"น้อยพรสวรรค์"}, {m:13, n:"วังศักดา"} ],
+                "ต.โนนหัน": [ {m:1, n:"โนนหัน"}, {m:2, n:"โนนชัย"}, {m:3, n:"ร่องแซง"}, {m:4, n:"โนนชาติ"}, {m:5, n:"โนนเมือง"}, {m:6, n:"โนนงาม"}, {m:7, n:"หนองม่วง"}, {m:8, n:"หนองคอง"}, {m:9, n:"หลังโนนชาติ"}, {m:10, n:"โนนหันใน"} ],
+                "ต.หนองเขียด": [ {m:1, n:"หนองเขียด"}, {m:2, n:"จอมศรี"}, {m:3, n:"โคกงาม"}, {m:4, n:"ธาตุ"}, {m:5, n:"หนองกุง"}, {m:6, n:"โนนศิลา"}, {m:7, n:"หนองหว้า"}, {m:8, n:"หนองหนามแท่ง"}, {m:9, n:"หนองเขียด"}, {m:10, n:"โนนรัง"} ],
+                "ต.โนนสะอาด": [ {m:1, n:"โนนสะอาด"}, {m:2, n:"เหมือดแอ่"}, {m:3, n:"หนองบัว"}, {m:4, n:"โนนลาน"}, {m:5, n:"แสนสุข"}, {m:6, n:"สมบูรณ์สุข"}, {m:7, n:"สนามบิน"}, {m:8, n:"โนนเรียน"}, {m:9, n:"มิตรภาพ"} ],
+                "ต.หนองเสาเล้า": [ {m:1, n:"หนองเสาเล้า"}, {m:2, n:"หนองโพงโพด"}, {m:3, n:"หนองศาลา"}, {m:4, n:"หนองศาลา"}, {m:5, n:"สุขสมบูรณ์"}, {m:6, n:"หนองหว้า"}, {m:7, n:"ห้วยแสง"}, {m:8, n:"โนนตุ่น"}, {m:9, n:"หนองเสาเล้า"}, {m:10, n:"หนองหว้า"} ],
+                "ต.โนนอุดม": [ {m:1, n:"ดอน"}, {m:2, n:"หอย"}, {m:3, n:"โคกสูง"}, {m:4, n:"โนนสว่าง"}, {m:5, n:"บัวสิมมา"}, {m:6, n:"โนนอุดม"}, {m:7, n:"โนนอุดม"}, {m:8, n:"พงษ์บัวบาน"}, {m:9, n:"หินตั้ง"}, {m:10, n:"หอย"}, {m:11, n:"หอย"} ],
+                "ต.วังหินลาด": [ {m:1, n:"วังหินลาด"}, {m:2, n:"หนองทุ่ม"}, {m:3, n:"นาคำน้อย"}, {m:4, n:"ฝายหิน"}, {m:5, n:"โป่งแห้ง"}, {m:6, n:"โสกก้อง"}, {m:7, n:"โสกอุดม"}, {m:8, n:"หนองไผ่เหนือ"}, {m:9, n:"นาดี"}, {m:10, n:"วังเจริญ"}, {m:11, n:"หนองทอง"}, {m:12, n:"วังหินลาดพัฒนา"} ],
+                "ต.หนองไผ่": [ {m:1, n:"กุดเข้"}, {m:2, n:"โนนทองหลาง"}, {m:3, n:"หนองไผ่"}, {m:4, n:"วังหูกวาง"}, {m:5, n:"หนองไผ่ใต้"}, {m:6, n:"ห้วยบง"}, {m:7, n:"โนนสะอาด"}, {m:8, n:"หนองขาม"}, {m:9, n:"หนองขาม"}, {m:10, n:"หนองผือ"}, {m:11, n:"เทพนคร"}, {m:12, n:"หนองหล่ม"}, {m:13, n:"สุขสมบูรณ์"}, {m:14, n:"ถิ่นอุดม"}, {m:15, n:"หนองไผ่พัฒนา"}, {m:16, n:"โนนทอง"}, {m:17, n:"วังหูกวางเหนือ"}, {m:18, n:"กุดเข้ใหม่"}, {m:19, n:"มีชัย"} ],
+                "ต.นาเพียง": [ {m:1, n:"นาเพียง"}, {m:2, n:"โนนลาน"}, {m:3, n:"โนนสาวเอ้"}, {m:4, n:"เหมือดแอ่"}, {m:5, n:"โนนโพธิ์"}, {m:6, n:"หนองไฮ"}, {m:7, n:"หนองผือ"}, {m:8, n:"กุดชุมแสง"}, {m:9, n:"นาเพียงใหม่"}, {m:10, n:"โนนลานใหม่"}, {m:11, n:"โนนสาวเอ้พัฒนา"}, {m:12, n:"เหมือดแอ่พัฒนา"}, {m:13, n:"โนนโพธิ์ทอง"}, {m:14, n:"หนองไฮพัฒนา"}, {m:15, n:"นาเพียงเหนือ"} ],
+                "ต.ไชยสอ": [ {m:1, n:"ไชยสอ"}, {m:2, n:"ไชยสอ"}, {m:3, n:"หนองตาไก้"}, {m:4, n:"ท่าเดื่อ"}, {m:5, n:"โนนสำราญ"}, {m:6, n:"ท่าเดื่อ"}, {m:7, n:"ศรีเชิญ"}, {m:8, n:"สัมพันธ์"}, {m:9, n:"โนนสว่าง"}, {m:10, n:"หนองไฮ"} ]
+            },
+            "อ.สีชมพู": {
+                "ต.นาจาน": [ {m:1, n:"นาจาน"}, {m:2, n:"หนองไฮ"}, {m:3, n:"โนนว่านไฟ"}, {m:4, n:"สี่แยก"}, {m:5, n:"โนนสำราญ"}, {m:6, n:"วังโพน"}, {m:7, n:"ปากง่าม"}, {m:8, n:"หนองแสง"}, {m:9, n:"ท่าช้าง"}, {m:10, n:"วังขอนยม"}, {m:11, n:"นาเจริญ"}, {m:12, n:"หนองหญ้าขาว"}, {m:13, n:"โนนทัน"}, {m:14, n:"นางาม"}, {m:15, n:"โนนหัวนา"} ],
+                "ต.ซำยาง": [ {m:1, n:"ซำยาง"}, {m:2, n:"สารจอด"}, {m:3, n:"ร่องกลาง"}, {m:4, n:"หนองขี้ควาย"}, {m:5, n:"ตาด"}, {m:6, n:"ซำยาง"} ]
+            }
+        };
+
+        let candidates = [], allVotes = [], myChart = null, detailChart = null;
+
+        window.onload = async () => {
+            initFilters();
+            await loadInitialData();
+            subscribeRealtime();
+        };
+
+        function initFilters() {
+            const select = document.getElementById('amphoeFilter');
+            select.innerHTML = `<option value="ALL">📍 ดูภาพรวมทั้งจังหวัด</option>`;
+            Object.keys(realLocationData).forEach(a => {
+                select.innerHTML += `<option value="${a}">เฉพาะ ${a}</option>`;
+            });
+        }
+
+        function handleAmphoeChange() {
+            const amphoe = document.getElementById('amphoeFilter').value;
+            const tambonSelect = document.getElementById('tambonFilter');
+            
+            if(amphoe === 'ALL') {
+                tambonSelect.classList.add('hidden');
+                tambonSelect.value = 'ALL';
+            } else {
+                tambonSelect.innerHTML = `<option value="ALL">ดูทุกตำบลใน ${amphoe}</option>`;
+                Object.keys(realLocationData[amphoe]).forEach(t => {
+                    tambonSelect.innerHTML += `<option value="${t}">${t}</option>`;
+                });
+                tambonSelect.classList.remove('hidden');
+                tambonSelect.value = 'ALL';
+            }
+            calculateResults();
+        }
+
+        async function loadInitialData() {
+            const { data: cData } = await db.from('candidates').select('*').order('number');
+            candidates = cData || [];
+            const { data: vData } = await db.from('votes').select('*');
+            allVotes = vData || [];
+            calculateResults();
+            updateLastTime();
+        }
+
+        function subscribeRealtime() {
+            db.channel('realtime-votes').on('postgres_changes', { event: '*', schema: 'public', table: 'votes' }, () => {
+                loadInitialData();
+            }).subscribe((status) => {
+                if(status === 'SUBSCRIBED') {
+                    document.getElementById('statusText').innerText = 'LIVE';
+                    document.getElementById('statusText').className = 'text-xs font-bold tracking-wider text-green-400';
+                    document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-green-500 animate-pulse';
+                }
+            });
+        }
+
+        function calculateResults() {
+            const amphoeVal = document.getElementById('amphoeFilter').value;
+            const tambonVal = document.getElementById('tambonFilter').value;
+
+            let scoresMap = {};
+            candidates.forEach(c => scoresMap[c.id] = 0);
+
+            allVotes.forEach(v => {
+                let include = false;
+                if(amphoeVal === 'ALL') include = true;
+                else if(v.amphoe === amphoeVal) {
+                    if(tambonVal === 'ALL' || v.tambon === tambonVal) include = true;
+                }
+                if(include) scoresMap[v.candidate_id] += v.score;
+            });
+
+            const results = candidates.map(c => ({...c, totalScore: scoresMap[c.id]}));
+            updateChart(results);
+            updateLeaderboard(results);
+        }
+
+        function updateLastTime() {
+            const now = new Date();
+            document.getElementById('lastUpdate').innerText = `อัปเดต: ${now.toLocaleTimeString('th-TH')}`;
+        }
+
+        function updateChart(results) {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            const sorted = [...results].sort((a,b) => a.number - b.number);
+            const data = {
+                labels: sorted.map(r => `เบอร์ ${r.number}`),
+                datasets: [{ data: sorted.map(r => r.totalScore), backgroundColor: sorted.map(r => r.color), borderRadius: 6 }]
+            };
+            if(myChart) { myChart.data = data; myChart.update(); }
+            else myChart = new Chart(ctx, { type: 'bar', data: data, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } } } });
+        }
+
+        function updateLeaderboard(results) {
+            const sorted = [...results].sort((a,b) => b.totalScore - a.totalScore);
+            const html = sorted.map((r, i) => {
+                const imgDisplay = r.photo_url 
+                    ? `<img src="${r.photo_url}" class="w-12 h-12 rounded-full object-cover border-2 shadow-sm bg-white" style="border-color: ${r.color}">`
+                    : `<div class="w-12 h-12 flex items-center justify-center text-white font-bold rounded-full shadow-sm" style="background-color: ${r.color}">${r.number}</div>`;
+
+                // เพิ่ม onclick ที่ div หลัก
+                return `
+                <div onclick="openModal(${r.id})" class="flex items-center p-3 bg-slate-700/50 rounded-lg border-l-4 transition hover:bg-slate-700 mb-2 cursor-pointer group" style="border-color: ${r.color}">
+                    <div class="font-bold text-xl text-gray-500 w-8 text-center mr-2">#${i+1}</div>
+                    <div class="mr-3 relative">
+                        ${imgDisplay}
+                        <div class="absolute -bottom-1 -right-1 w-5 h-5 bg-white text-slate-900 text-[10px] font-bold flex items-center justify-center rounded-full border border-slate-300">${r.number}</div>
+                    </div>
+                    <div class="flex-1 pl-1">
+                        <div class="text-xs text-gray-400 group-hover:text-yellow-300 transition">คลิกดูรายละเอียด</div>
+                        <div class="font-bold text-base text-gray-100">${r.name}</div>
+                    </div>
+                    <div class="text-right"><div class="text-xl font-bold text-yellow-400 font-mono highlight-update tracking-tighter">${r.totalScore.toLocaleString()}</div></div>
+                </div>`
+            }).join('');
+            document.getElementById('leaderboard').innerHTML = html;
+        }
+
+        // --- ส่วนของ Modal Details ---
+        function openModal(candidateId) {
+            const candidate = candidates.find(c => c.id === candidateId);
+            if(!candidate) return;
+
+            // 1. ใส่หัวข้อ
+            const imgDisplay = candidate.photo_url 
+                ? `<img src="${candidate.photo_url}" class="w-16 h-16 rounded-full object-cover border-4 shadow-md bg-white" style="border-color: ${candidate.color}">`
+                : `<div class="w-16 h-16 flex items-center justify-center text-white text-2xl font-bold rounded-full shadow-md" style="background-color: ${candidate.color}">${candidate.number}</div>`;
+            
+            document.getElementById('modalHeader').innerHTML = `
+                ${imgDisplay}
+                <div>
+                    <div class="text-sm text-gray-400">ผู้สมัครเบอร์ ${candidate.number}</div>
+                    <div class="text-xl font-bold text-white">${candidate.name}</div>
+                </div>
+            `;
+
+            // 2. คำนวณคะแนนรายอำเภอ
+            const amphoeScores = { "อ.ภูผาม่าน": 0, "อ.ชุมแพ": 0, "อ.สีชมพู": 0 };
+            let total = 0;
+
+            allVotes.forEach(v => {
+                if(v.candidate_id === candidateId) {
+                    if(amphoeScores[v.amphoe] !== undefined) {
+                        amphoeScores[v.amphoe] += v.score;
+                    }
+                    total += v.score;
+                }
+            });
+
+            document.getElementById('modalTotalScore').innerText = total.toLocaleString();
+
+            // หาอำเภอที่ได้เยอะสุด
+            let maxScore = -1;
+            let topAmphoe = "-";
+            for(const [amp, score] of Object.entries(amphoeScores)) {
+                if(score > maxScore) {
+                    maxScore = score;
+                    topAmphoe = amp;
+                }
+            }
+            document.getElementById('modalTopAmphoe').innerText = topAmphoe;
+
+            // 3. วาดกราฟใน Modal
+            const ctx = document.getElementById('detailChart').getContext('2d');
+            if(detailChart) detailChart.destroy(); // ล้างกราฟเก่าก่อนเสมอ
+
+            detailChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(amphoeScores),
+                    datasets: [{
+                        label: 'คะแนน',
+                        data: Object.values(amphoeScores),
+                        backgroundColor: [
+                            'rgba(54, 162, 235, 0.7)', // สีฟ้า
+                            'rgba(255, 206, 86, 0.7)', // สีเหลือง
+                            'rgba(255, 99, 132, 0.7)'  // สีแดง
+                        ],
+                        borderColor: [
+                            'rgba(54, 162, 235, 1)',
+                            'rgba(255, 206, 86, 1)',
+                            'rgba(255, 99, 132, 1)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, grid: { color: '#334155' } } }
+                }
+            });
+
+            // 4. แสดง Modal
+            const modal = document.getElementById('detailModal');
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            document.body.classList.add('modal-active');
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('detailModal');
+            modal.classList.add('opacity-0', 'pointer-events-none');
+            document.body.classList.remove('modal-active');
+        }
+    </script>
+</body>
+</html>
